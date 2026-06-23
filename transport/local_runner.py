@@ -141,7 +141,10 @@ class LocalRunner:
             return
         assert self._proc.stdout is not None
         while True:
-            line_bytes = await self._proc.stdout.readline()
+            try:
+                line_bytes = await self._proc.stdout.readline()
+            except (ConnectionResetError, asyncio.IncompleteReadError):
+                break  # subprocess exited or pipe was reset
             if not line_bytes:
                 break
             raw = line_bytes.decode("utf-8", errors="replace").rstrip()
@@ -150,8 +153,11 @@ class LocalRunner:
                 if self._approval_cb:
                     approved = await self._approval_cb(raw)
                 if self._proc.stdin:
-                    self._proc.stdin.write(("y\n" if approved else "n\n").encode())
-                    await self._proc.stdin.drain()
+                    try:
+                        self._proc.stdin.write(("y\n" if approved else "n\n").encode())
+                        await self._proc.stdin.drain()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass  # process exited before we could write the response
             text, meta = _extract_text(raw)
             meta = meta or {}
             if meta.get("session_id"):

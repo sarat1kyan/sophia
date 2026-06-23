@@ -28,11 +28,9 @@ def _split_plain(text: str, limit: int = MAX_MSG) -> list[str]:
 
 def _format_text(text: str) -> tuple[str, str | None]:
     """Convert complete markdown code fences to Telegram HTML <pre><code>.
-    Returns (formatted, parse_mode). Falls back to plain if blocks are open."""
-    if "```" not in text:
-        return text, None
-    if text.count("```") % 2 != 0:
-        return text, None  # incomplete block - wait for closing fence
+    Always returns HTML parse mode with properly escaped content."""
+    if "```" not in text or text.count("```") % 2 != 0:
+        return escape(text), "HTML"
     result = []
     last = 0
     for m in _FENCE_BLOCK.finditer(text):
