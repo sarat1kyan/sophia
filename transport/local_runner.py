@@ -114,6 +114,7 @@ class LocalRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=proc_env,
+            limit=10 * 1024 * 1024,  # 10MB: Claude JSON lines can be very long
         )
         # Close stdin immediately - we're in -p (non-interactive) mode.
         if self._proc.stdin:
