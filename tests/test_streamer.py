@@ -3,19 +3,19 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from streaming.streamer import AgentStreamer, _split_text
+from streaming.streamer import AgentStreamer, _split_plain
 
 
-# ── _split_text ───────────────────────────────────────────────────────────────
+# ── _split_plain ──────────────────────────────────────────────────────────────
 
 def test_split_text_short():
-    parts = _split_text("hello world", limit=4096)
+    parts = _split_plain("hello world", limit=4096)
     assert parts == ["hello world"]
 
 
 def test_split_text_long():
     long = "word\n" * 2000  # ~10000 chars
-    parts = _split_text(long, limit=4096)
+    parts = _split_plain(long, limit=4096)
     assert len(parts) > 1
     for p in parts:
         assert len(p) <= 4096
@@ -23,14 +23,14 @@ def test_split_text_long():
 
 def test_split_text_no_newline():
     text = "x" * 5000
-    parts = _split_text(text, limit=4096)
+    parts = _split_plain(text, limit=4096)
     assert len(parts) == 2
     assert len(parts[0]) == 4096
 
 
 def test_split_text_exact_limit():
     text = "a" * 4096
-    parts = _split_text(text, limit=4096)
+    parts = _split_plain(text, limit=4096)
     assert parts == [text]
 
 
@@ -104,8 +104,9 @@ async def test_send_orchestrator_notice_resets_state():
     s._current_text = "previous"
 
     await s.send_orchestrator_notice(
-        '[[SOPHIA:CREATE_WORKSPACE name="p" path="/tmp/p"]]',
-        "✅ Workspace <b>p</b> created"
+        "CREATE_WORKSPACE",
+        {"name": "p", "path": "/tmp/p"},
+        "✅ Workspace p created",
     )
 
     assert s._current_msg_id is None
