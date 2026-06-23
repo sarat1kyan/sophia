@@ -78,7 +78,7 @@ class AgentStreamer:
         self._tool_count: int = 0
 
     def _prefix(self) -> str:
-        return f"🤖 <b>[{escape(self.agent_name)}]</b>\n"
+        return f"🤖 <b>{escape(self.agent_name)}</b>\n"
 
     async def feed(self, line: str) -> None:
         if self.mode != "full":
@@ -151,6 +151,18 @@ class AgentStreamer:
         except Exception as e:
             log.error("Failed to send artifact %s: %s", file_path, e)
 
+    async def send_agent_start(self) -> None:
+        """Send a 'starting' card; in tools mode it becomes the activity board."""
+        if self.mode == "silent":
+            return
+        try:
+            text = f"⚙️ <b>{escape(self.agent_name)}</b>  <i>starting…</i>"
+            msg = await self.bot.send_message(self.chat_id, text, parse_mode="HTML")
+            if self.mode == "tools":
+                self._activity_msg_id = msg.message_id
+        except Exception as e:
+            log.error("Failed to send agent start: %s", e)
+
     async def send_tool_notice(self, tool_name: str, summary: str, agent_id: str) -> None:
         if self.mode == "silent":
             return
@@ -159,13 +171,13 @@ class AgentStreamer:
         icon = "⚡" if sensitive else "🔧"
 
         if self.mode == "tools":
-            # Compact: update a single activity-board message in-place
             self._tool_count += 1
             short = summary[:200]
             text = (
-                f"🤖 <b>[{escape(self.agent_name)}]</b> working...\n"
-                f"━━━━━━━━━━━━━\n"
-                f"{icon} <b>{escape(tool_name)}</b>  #{self._tool_count}\n"
+                f"⚙️ <b>{escape(self.agent_name)}</b>"
+                f"  ·  <i>step {self._tool_count}</i>\n"
+                f"──────────────────\n"
+                f"{icon} <b>{escape(tool_name)}</b>\n"
                 f"<code>{escape(short)}</code>"
             )
             if self._activity_msg_id:
@@ -179,7 +191,7 @@ class AgentStreamer:
                     )
                     return
                 except TelegramBadRequest:
-                    self._activity_msg_id = None  # stale; fall through and send new
+                    self._activity_msg_id = None
             try:
                 msg = await self.bot.send_message(
                     self.chat_id, text, parse_mode="HTML",
@@ -190,9 +202,9 @@ class AgentStreamer:
                 log.error("Failed to send tool notice: %s", e)
             return
 
-        # full mode: separate message per tool call
+        # full mode: one message per tool call
         text = (
-            f"{icon} <b>[{escape(self.agent_name)}]</b>  <b>{escape(tool_name)}</b>\n"
+            f"{icon} <b>{escape(self.agent_name)}</b>  ·  <b>{escape(tool_name)}</b>\n"
             f"<code>{escape(summary[:300])}</code>"
         )
         try:
@@ -208,7 +220,7 @@ class AgentStreamer:
             log.error("Failed to send tool notice: %s", e)
 
     async def send_orchestrator_notice(self, cmd_type: str, cmd_args: dict, result: str) -> None:
-        """Clean card for each Sophia orchestration action. Always visible regardless of mode."""
+        """Structured status card for each Sophia orchestration action."""
         icons = {
             "CREATE_WORKSPACE": "📁",
             "CREATE_AGENT": "🤖",
@@ -216,33 +228,48 @@ class AgentStreamer:
             "LIST_AGENTS": "📋",
             "LIST_WORKSPACES": "🗂",
         }
-        icon = icons.get(cmd_type, "🎭")
+        labels = {
+            "CREATE_WORKSPACE": "New Workspace",
+            "CREATE_AGENT": "New Agent",
+            "RUN_AGENT": "Starting Agent",
+            "LIST_AGENTS": "List Agents",
+            "LIST_WORKSPACES": "List Workspaces",
+        }
+        icon = icons.get(cmd_type, "🔧")
+        label = labels.get(cmd_type, cmd_type)
+        sep = "──────────────────"
 
-        # Build a context line showing key args without raw command syntax
-        context = ""
+        body_lines = [result]
         if cmd_type == "CREATE_WORKSPACE":
-            name = cmd_args.get("name", "")
             path = cmd_args.get("path", "")
-            context = f"\n<code>{escape(path)}</code>" if path else ""
+            if path:
+                body_lines.append(f"<code>{escape(path)}</code>")
         elif cmd_type == "CREATE_AGENT":
-            role = cmd_args.get("role", "")
-            tpl = cmd_args.get("template", "")
-            ws = cmd_args.get("workspace", "")
             parts = []
+            role = cmd_args.get("role", "")
+            tpl  = cmd_args.get("template", "")
+            ws   = cmd_args.get("workspace", "")
             if role:
                 parts.append(f"role: {escape(role)}")
             if tpl and tpl != role:
                 parts.append(f"template: {escape(tpl)}")
             if ws:
                 parts.append(f"workspace: {escape(ws)}")
-            context = f"\n<i>{' | '.join(parts)}</i>" if parts else ""
+            if parts:
+                body_lines.append(f"<i>{' · '.join(parts)}</i>")
         elif cmd_type == "RUN_AGENT":
             prompt = cmd_args.get("prompt", "")
             if prompt:
-                preview = prompt[:120].replace("\n", " ")
-                context = f"\n<i>{escape(preview)}{'...' if len(prompt) > 120 else ''}</i>"
+                preview = prompt[:100].replace("\n", " ")
+                body_lines.append(
+                    f"<i>{escape(preview)}{'…' if len(prompt) > 100 else ''}</i>"
+                )
 
-        text = f"🎭 <b>Sophia</b>  {icon}\n{result}{context}"
+        text = (
+            f"🎭 <b>Sophia</b>  ·  {icon} {label}\n"
+            f"{sep}\n"
+            + "\n".join(body_lines)
+        )
         try:
             await self.bot.send_message(self.chat_id, text, parse_mode="HTML")
             self._current_msg_id = None
@@ -259,23 +286,27 @@ class AgentStreamer:
         await self.flush()
         icon_map = {"done": "✅", "timeout": "⏱", "error": "❌"}
         emoji = icon_map.get(status, "❌")
+        sep = "━" * 22
 
-        token_line = ""
+        parts = [
+            sep,
+            f"{emoji}  <b>{escape(self.agent_name)}</b>  ·  {status}",
+            sep,
+        ]
         if usage:
-            inp = usage.get("input_tokens", 0)
-            out = usage.get("output_tokens", 0)
+            inp    = usage.get("input_tokens", 0)
+            out    = usage.get("output_tokens", 0)
             cached = usage.get("cache_read_input_tokens", 0)
-            token_line = f"\n<code>in {inp:,} | out {out:,}"
+            parts.append(f"📥 in {inp:,}  ·  📤 out {out:,}")
             if cached:
-                token_line += f" | cached {cached:,}"
+                parts.append(f"⚡ {cached:,} cached")
             if cost is not None:
-                token_line += f" | ${cost:.4f}"
-            token_line += "</code>"
+                parts.append(f"💰 ${cost:.4f}")
 
         try:
             await self.bot.send_message(
                 self.chat_id,
-                f"{emoji} <b>[{escape(self.agent_name)}]</b> {status}.{token_line}",
+                "\n".join(parts),
                 parse_mode="HTML",
             )
         except Exception as e:

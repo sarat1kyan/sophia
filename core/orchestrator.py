@@ -182,14 +182,18 @@ async def start_agent(agent_id: str, prompt: str, chat_id: int, resume: bool = F
             from bot.keyboards import approval_keyboard
             await _bot.send_message(
                 chat_id,
-                f"⚠️ <b>[{agent.name}]</b> Approval needed:\n\n"
+                f"🔐 <b>Approval Required</b>\n"
+                f"──────────────────\n"
+                f"Agent: <b>{agent.name}</b>\n\n"
                 f"<code>{prompt_text[:300]}</code>\n\n"
-                f"Request ID: <code>{req_id_str}</code>",
+                f"──────────────────\n"
+                f"Request <code>#{req_id_str}</code>",
                 reply_markup=approval_keyboard(int(req_id_str)),
                 parse_mode="HTML",
             )
 
     agent.set_notify(notify_cb)
+    await streamer.send_agent_start()
     agent.launch(prompt, streamer, resume=resume)
     return True
 

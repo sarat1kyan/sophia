@@ -62,20 +62,22 @@ def _base_router() -> Router:
     @r.message(Command("start"))
     async def cmd_start(msg: Message) -> None:
         from core import orchestrator, approval as appr
-        agents_list  = await orchestrator.list_agents()
-        pending      = await appr.get_pending_requests()
-        running      = sum(1 for a in agents_list if a["status"] == "running")
-        total        = len(agents_list)
-        pending_n    = len(pending)
-
-        alert = f"  ⚠️ {pending_n} pending approval{'s' if pending_n != 1 else ''}\n" if pending_n else ""
-
+        agents_list = await orchestrator.list_agents()
+        pending     = await appr.get_pending_requests()
+        running     = sum(1 for a in agents_list if a["status"] == "running")
+        total       = len(agents_list)
+        pending_n   = len(pending)
+        pending_line = (
+            f"⚠️  <b>{pending_n}</b> pending approval{'s' if pending_n != 1 else ''}"
+            if pending_n else "✅  No pending approvals"
+        )
         await msg.answer(
-            f"<b>SOPHIA</b> - Claude Code Agent Orchestrator\n\n"
-            f"🤖 Agents: <b>{total}</b>  ({running} running)\n"
-            f"⏳ Pending: <b>{pending_n}</b>\n"
-            f"{alert}\n"
-            f"Use the menu below or type any /command.",
+            f"🎭  <b>S O P H I A</b>\n"
+            f"<i>Claude Code · Agent Orchestrator</i>\n\n"
+            f"🤖  <b>{total}</b> agent{'s' if total != 1 else ''}  ·  <b>{running}</b> running\n"
+            f"{pending_line}\n\n"
+            f"──────────────────────\n"
+            f"<i>Select a section below ↓</i>",
             parse_mode="HTML",
             reply_markup=keyboards.main_menu_keyboard(),
         )
@@ -130,13 +132,17 @@ def _base_router() -> Router:
         running     = sum(1 for a in agents_list if a["status"] == "running")
         total       = len(agents_list)
         pending_n   = len(pending)
-        alert = f"  ⚠️ {pending_n} pending approval{'s' if pending_n != 1 else ''}\n" if pending_n else ""
+        pending_line = (
+            f"⚠️  <b>{pending_n}</b> pending approval{'s' if pending_n != 1 else ''}"
+            if pending_n else "✅  No pending approvals"
+        )
         await cb.message.edit_text(
-            f"<b>SOPHIA</b> - Claude Code Agent Orchestrator\n\n"
-            f"🤖 Agents: <b>{total}</b>  ({running} running)\n"
-            f"⏳ Pending: <b>{pending_n}</b>\n"
-            f"{alert}\n"
-            f"Use the menu below or type any /command.",
+            f"🎭  <b>S O P H I A</b>\n"
+            f"<i>Claude Code · Agent Orchestrator</i>\n\n"
+            f"🤖  <b>{total}</b> agent{'s' if total != 1 else ''}  ·  <b>{running}</b> running\n"
+            f"{pending_line}\n\n"
+            f"──────────────────────\n"
+            f"<i>Select a section below ↓</i>",
             parse_mode="HTML",
             reply_markup=keyboards.main_menu_keyboard(),
         )
@@ -149,19 +155,19 @@ def _base_router() -> Router:
         agents_list = await orchestrator.list_agents()
         if not agents_list:
             await cb.message.edit_text(
-                "<b>🤖 Agents</b>\n\nNo agents yet.\nCreate your first agent to get started.",
+                "🤖 <b>Agents</b>\n\n<i>No agents yet. Create your first one to get started.</i>",
                 parse_mode="HTML",
                 reply_markup=keyboards.agents_list_keyboard([]),
             )
             await cb.answer()
             return
-        lines = ["<b>🤖 Agents</b>\n"]
+        lines = [f"🤖 <b>Agents</b>  ({len(agents_list)})", "──────────────────────"]
         for a in agents_list:
             icon = STATUS_ICON.get(a["status"], "❓")
-            ws = f"  📁 {a['workspace_name']}" if a["workspace_name"] else ""
-            rc = a["run_count"] if "run_count" in a.keys() else 0
-            lines.append(f"{icon} <b>{a['name']}</b> [{a['role']}]{ws}  <i>×{rc}</i>")
-        lines.append("\n<i>Tap an agent to manage it.</i>")
+            ws   = f"  📁 <i>{a['workspace_name']}</i>" if a["workspace_name"] else ""
+            rc   = a["run_count"] if "run_count" in a.keys() else 0
+            lines.append(f"{icon} <b>{a['name']}</b>  [{a['role']}]{ws}  ×{rc}")
+        lines.append("\n<i>Tap an agent below to manage it.</i>")
         await cb.message.edit_text(
             "\n".join(lines),
             parse_mode="HTML",
@@ -280,27 +286,30 @@ def _base_router() -> Router:
         groups_list = await bridge_mod.list_groups()
         pending     = await appr.get_pending_requests()
         STATUS_ICON = {"idle": "💤", "running": "🟢", "done": "✅", "error": "🔴", "waiting_approval": "⏳"}
-        lines = ["<b>📊 SOPHIA Status</b>\n"]
-        lines.append(f"<b>Agents ({len(agents_list)})</b>")
+        sep = "──────────────────────"
+        lines = [f"📊 <b>SOPHIA Status</b>", sep, f"<b>Agents</b>  ({len(agents_list)})"]
         for a in agents_list:
             rc   = a["run_count"] if "run_count" in a.keys() else 0
-            last = str(a["last_run_at"])[:16] if a["last_run_at"] else "-"
+            last = str(a["last_run_at"])[:16] if a["last_run_at"] else "—"
+            stat = STATUS_ICON.get(a["status"], "❓")
             lines.append(
-                f"  {STATUS_ICON.get(a['status'],'❓')} <b>{a['name']}</b> [{a['role']}]"
-                f"  runs:{rc}  last:{last}"
+                f"  {stat} <b>{a['name']}</b>  <i>[{a['role']}]</i>"
+                f"  ×{rc}  <code>{last}</code>"
             )
         if not agents_list:
-            lines.append("  No agents yet")
-        lines.append(f"\n<b>Groups ({len(groups_list)})</b>")
+            lines.append("  <i>No agents yet</i>")
+        lines.append(f"")
+        lines.append(f"<b>Groups</b>  ({len(groups_list)})")
         for g in groups_list:
-            lines.append(f"  🔗 {g['name']} [{g['bridge_mode']}]")
+            icon = "📡" if g["bridge_mode"] == "broadcast" else "👑"
+            lines.append(f"  {icon} <b>{g['name']}</b>  [{g['bridge_mode']}]")
         if not groups_list:
-            lines.append("  No groups yet")
-        lines.append(f"\n<b>Pending Approvals ({len(pending)})</b>")
-        for p in pending:
-            lines.append(f"  ⚠️ #{p['id']} {p['agent_name']}: {p['prompt'][:60]}…")
-        if not pending:
-            lines.append("  None")
+            lines.append("  <i>None</i>")
+        if pending:
+            lines.append(f"")
+            lines.append(f"⚠️ <b>Pending</b>  ({len(pending)})")
+            for p in pending:
+                lines.append(f"  #{p['id']} {p['agent_name']}: <code>{p['prompt'][:60]}</code>")
         await cb.message.edit_text("\n".join(lines), parse_mode="HTML",
                                    reply_markup=keyboards.main_menu_keyboard())
         await cb.answer()
