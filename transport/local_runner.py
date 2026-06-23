@@ -93,9 +93,15 @@ def _extract_text(raw: str) -> tuple[str | None, dict | None]:
 
 
 class LocalRunner:
-    def __init__(self, claude_path: str = "claude", default_flags: list[str] | None = None):
+    def __init__(
+        self,
+        claude_path: str = "claude",
+        default_flags: list[str] | None = None,
+        run_as_user: str | None = None,
+    ):
         self.claude_path = claude_path
         self.default_flags = default_flags or []
+        self.run_as_user = run_as_user  # if set and we're root, run claude as this user
         self._proc: asyncio.subprocess.Process | None = None
         self._approval_cb: Callable[[str], Awaitable[bool]] | None = None
         self._session_id_cb: Callable[[str], Awaitable[None]] | None = None
@@ -114,11 +120,47 @@ class LocalRunner:
         extra_flags: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
-        flags = self.default_flags + (extra_flags or []) + [
-            "-p", "--output-format", "stream-json", "--verbose"
-        ]
-        cmd = [self.claude_path] + flags + [prompt]
-        proc_env = {**os.environ, **(env or {})}
+        # When running as a dedicated non-root user via sudo, inject
+        # --dangerously-skip-permissions so Bash and all tools are unrestricted.
+        # Strip any --permission-mode flags from extra_flags to avoid conflicts.
+        if self.run_as_user and os.getuid() == 0:
+            import pwd
+            try:
+                pw = pwd.getpwnam(self.run_as_user)
+                user_home = pw.pw_dir
+            except KeyError:
+                log.warning("run_as_user '%s' not found - falling back to root", self.run_as_user)
+                self.run_as_user = None
+                user_home = os.environ.get("HOME", "/root")
+
+        if self.run_as_user and os.getuid() == 0:
+            # Remove any --permission-mode flags; --dangerously-skip-permissions
+            # already sets bypassPermissions and must appear alone.
+            clean_extra = []
+            skip = False
+            for flag in (extra_flags or []):
+                if flag == "--permission-mode":
+                    skip = True
+                    continue
+                if skip:
+                    skip = False
+                    continue
+                clean_extra.append(flag)
+
+            flags = (
+                ["--dangerously-skip-permissions"]
+                + self.default_flags
+                + clean_extra
+                + ["-p", "--output-format", "stream-json", "--verbose"]
+            )
+            cmd = ["sudo", "-u", self.run_as_user, "-H", self.claude_path] + flags + [prompt]
+            proc_env = {**os.environ, "HOME": user_home, **(env or {})}
+        else:
+            flags = self.default_flags + (extra_flags or []) + [
+                "-p", "--output-format", "stream-json", "--verbose"
+            ]
+            cmd = [self.claude_path] + flags + [prompt]
+            proc_env = {**os.environ, **(env or {})}
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=workspace_path,

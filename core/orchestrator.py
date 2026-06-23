@@ -143,9 +143,11 @@ async def create_agent(
 
 
 def _make_local_runner() -> LocalRunner:
+    claude_cfg = _config.get("claude", {})
     return LocalRunner(
-        claude_path=_config.get("claude", {}).get("cli_path", "claude"),
-        default_flags=_config.get("claude", {}).get("default_flags", []),
+        claude_path=claude_cfg.get("cli_path", "claude"),
+        default_flags=claude_cfg.get("default_flags", []),
+        run_as_user=claude_cfg.get("run_as_user"),
     )
 
 

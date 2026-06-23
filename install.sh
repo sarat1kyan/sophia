@@ -156,11 +156,20 @@ install_nodejs() {
 install_claude_code() {
     if command -v claude &>/dev/null; then
         success "Claude Code CLI already installed: $(claude --version 2>/dev/null || echo 'unknown version')"
-        return
+    else
+        info "Installing Claude Code CLI globally..."
+        npm install -g @anthropic-ai/claude-code
+        success "Claude Code CLI installed at $(command -v claude)"
     fi
-    info "Installing Claude Code CLI globally..."
-    npm install -g @anthropic-ai/claude-code
-    success "Claude Code CLI installed at $(command -v claude)"
+
+    # If claude is installed under a root-only path (e.g. ~/.local/bin), ensure the
+    # service user can execute it by making the parent directories world-traversable.
+    CLAUDE_REAL=$(readlink -f "$(command -v claude)" 2>/dev/null || true)
+    if [[ -n "$CLAUDE_REAL" && "$CLAUDE_REAL" == /root/* ]]; then
+        info "Fixing claude binary permissions for non-root access..."
+        chmod o+x /root /root/.local /root/.local/share /root/.local/bin 2>/dev/null || true
+        success "Claude binary at $CLAUDE_REAL is now accessible to $SERVICE_USER"
+    fi
 }
 
 # ── repository ────────────────────────────────────────────────────────────────
