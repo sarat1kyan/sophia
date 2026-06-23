@@ -37,7 +37,7 @@ def _load_config() -> dict:
 def _build_extra_flags(settings: dict, resume_id: str | None = None) -> list[str]:
     flags: list[str] = []
     if settings.get("skip_permissions"):
-        flags += ["--permission-mode", "bypassPermissions"]
+        flags += ["--permission-mode", "acceptEdits"]
     effort = settings.get("effort")
     if effort:
         flags += ["--effort", effort]

@@ -128,8 +128,10 @@ class LocalRunner:
             env=proc_env,
             limit=10 * 1024 * 1024,  # 10MB: Claude JSON lines can be very long
         )
-        # Keep stdin open so we can respond to approval prompts and inject follow-up prompts.
-        # The -p flag delivers the initial prompt via argv, not stdin, so leaving it open is safe.
+        # Close stdin: we pass the prompt via -p argv, not stdin. Leaving it open causes Claude
+        # Code to wait up to 3s for stdin data before starting. EOF signals we have no input.
+        if self._proc.stdin:
+            self._proc.stdin.close()
         log.info("LocalRunner started PID=%d workspace=%s", self._proc.pid, workspace_path)
 
     async def stream(self) -> AsyncIterator[tuple[str, dict]]:
