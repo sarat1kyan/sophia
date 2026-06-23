@@ -126,3 +126,111 @@ def test_extract_unknown_type_returns_none():
     payload = json.dumps({"type": "unknown_future_type", "data": "x"})
     text, meta = _extract_text(payload)
     assert text is None
+
+
+# ── _needs_approval additional patterns ──────────────────────────────────────
+
+def test_needs_approval_blocked_pending():
+    assert _needs_approval("The shell commands are blocked pending your approval")
+
+def test_needs_approval_bash_not_allowed():
+    assert _needs_approval("bash is not allowed in the current configuration")
+
+def test_needs_approval_shell_command_approval():
+    assert _needs_approval("This shell command requires approval before running")
+
+def test_needs_approval_press_enter():
+    assert _needs_approval("Press Enter to continue with this operation")
+
+def test_needs_approval_claude_code_dialog():
+    assert _needs_approval("Claude Code permission dialog is waiting")
+
+def test_needs_approval_do_you_want():
+    assert _needs_approval("Do you want to execute this command?")
+
+
+# ── _summarise_tool_input additional ──────────────────────────────────────────
+
+def test_summarise_edit_returns_path():
+    assert _summarise_tool_input("Edit", {"file_path": "/tmp/x.py"}) == "/tmp/x.py"
+
+def test_summarise_multiedit_returns_path():
+    assert _summarise_tool_input("MultiEdit", {"file_path": "/tmp/y.py"}) == "/tmp/y.py"
+
+def test_summarise_unknown_tool_long_input_truncated():
+    long_input = {"key": "v" * 300}
+    result = _summarise_tool_input("FutureTool", long_input)
+    assert len(result) <= 200
+
+
+# ── _extract_text additional ──────────────────────────────────────────────────
+
+def test_extract_result_with_usage():
+    payload = json.dumps({
+        "type": "result",
+        "is_error": False,
+        "usage": {"input_tokens": 100, "output_tokens": 50},
+    })
+    text, meta = _extract_text(payload)
+    assert text is None
+    assert meta is not None
+    assert meta["usage"]["input_tokens"] == 100
+    assert meta["usage"]["output_tokens"] == 50
+
+def test_extract_result_with_cost():
+    payload = json.dumps({
+        "type": "result",
+        "is_error": False,
+        "cost_usd": 0.0124,
+    })
+    text, meta = _extract_text(payload)
+    assert meta is not None
+    assert abs(meta["cost_usd"] - 0.0124) < 0.0001
+
+def test_extract_result_error_with_usage():
+    payload = json.dumps({
+        "type": "result",
+        "is_error": True,
+        "result": "Something failed",
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    })
+    text, meta = _extract_text(payload)
+    assert "error" in text.lower() or "Something failed" in text
+    assert meta["usage"]["input_tokens"] == 10
+
+def test_extract_system_init_no_session_id():
+    payload = json.dumps({
+        "type": "system",
+        "subtype": "init",
+        "model": "claude-sonnet-4-6",
+    })
+    text, meta = _extract_text(payload)
+    assert text is not None
+    assert "session started" in text
+    assert meta == {}  # empty dict, no session_id key
+
+def test_extract_system_non_init_subtype_returns_none():
+    payload = json.dumps({"type": "system", "subtype": "heartbeat"})
+    text, meta = _extract_text(payload)
+    assert text is None
+    assert meta is None
+
+def test_extract_assistant_empty_content_returns_none():
+    payload = json.dumps({
+        "type": "assistant",
+        "message": {"content": []},
+    })
+    text, meta = _extract_text(payload)
+    assert text is None
+    assert meta is None
+
+def test_extract_assistant_multiple_text_blocks_joined():
+    payload = json.dumps({
+        "type": "assistant",
+        "message": {"content": [
+            {"type": "text", "text": "Hello"},
+            {"type": "text", "text": "World"},
+        ]},
+    })
+    text, meta = _extract_text(payload)
+    assert text == "Hello\nWorld"
