@@ -12,6 +12,11 @@ APPROVAL_PATTERNS = [
     re.compile(r"\[y/n\]|\[Y/n\]|\(y/n\)", re.IGNORECASE),
     re.compile(r"Press Enter to (continue|confirm)", re.IGNORECASE),
     re.compile(r"Allow this action\?", re.IGNORECASE),
+    # Claude Code native permission dialog patterns
+    re.compile(r"blocked pending your approval", re.IGNORECASE),
+    re.compile(r"Claude Code permission dialog", re.IGNORECASE),
+    re.compile(r"bash is not allowed", re.IGNORECASE),
+    re.compile(r"shell command.*approval", re.IGNORECASE),
 ]
 
 
@@ -123,9 +128,8 @@ class LocalRunner:
             env=proc_env,
             limit=10 * 1024 * 1024,  # 10MB: Claude JSON lines can be very long
         )
-        # Close stdin immediately - we're in -p (non-interactive) mode.
-        if self._proc.stdin:
-            self._proc.stdin.close()
+        # Keep stdin open so we can respond to approval prompts and inject follow-up prompts.
+        # The -p flag delivers the initial prompt via argv, not stdin, so leaving it open is safe.
         log.info("LocalRunner started PID=%d workspace=%s", self._proc.pid, workspace_path)
 
     async def stream(self) -> AsyncIterator[tuple[str, dict]]:

@@ -75,6 +75,9 @@ class AgentStreamer:
         self._current_text = ""
         self._in_code_block = False
         self._artifacts: list[str] = []
+        # Tools-mode compact board
+        self._activity_msg_id: int | None = None
+        self._tool_count: int = 0
 
     def _prefix(self) -> str:
         return f"🤖 <b>[{escape(self.agent_name)}]</b>\n"
@@ -156,6 +159,40 @@ class AgentStreamer:
         from bot.keyboards import kill_during_run_keyboard
         sensitive = tool_name.lower() in ("bash", "computer", "repl", "exec")
         icon = "⚡" if sensitive else "🔧"
+
+        if self.mode == "tools":
+            # Compact: update a single activity-board message in-place
+            self._tool_count += 1
+            short = summary[:200]
+            text = (
+                f"🤖 <b>[{escape(self.agent_name)}]</b> working...\n"
+                f"━━━━━━━━━━━━━\n"
+                f"{icon} <b>{escape(tool_name)}</b>  #{self._tool_count}\n"
+                f"<code>{escape(short)}</code>"
+            )
+            if self._activity_msg_id:
+                try:
+                    await self.bot.edit_message_text(
+                        text,
+                        chat_id=self.chat_id,
+                        message_id=self._activity_msg_id,
+                        parse_mode="HTML",
+                        reply_markup=kill_during_run_keyboard(agent_id),
+                    )
+                    return
+                except TelegramBadRequest:
+                    self._activity_msg_id = None  # stale; fall through and send new
+            try:
+                msg = await self.bot.send_message(
+                    self.chat_id, text, parse_mode="HTML",
+                    reply_markup=kill_during_run_keyboard(agent_id),
+                )
+                self._activity_msg_id = msg.message_id
+            except Exception as e:
+                log.error("Failed to send tool notice: %s", e)
+            return
+
+        # full mode: separate message per tool call
         text = (
             f"{icon} <b>[{escape(self.agent_name)}]</b>  <b>{escape(tool_name)}</b>\n"
             f"<code>{escape(summary[:300])}</code>"
