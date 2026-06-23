@@ -329,8 +329,12 @@ def agent_settings_keyboard(agent_id: str, settings: dict) -> InlineKeyboardMark
     model = settings.get("model") or "default"
     budget = f"${settings['max_budget_usd']}" if settings.get("max_budget_usd") else "none"
     timeout = f"{settings['timeout_seconds']}s" if settings.get("timeout_seconds") else "none"
+    stream_icon = {"full": "🔊", "tools": "🔧", "silent": "🔇"}
+    stream_mode = settings.get("stream_mode", "full")
+    stream_label = f"{stream_icon.get(stream_mode, '🔊')} Output: {stream_mode}"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"🔓 Skip Permissions: {skip}", callback_data=f"agt_set_toggle_skip:{agent_id}")],
+        [InlineKeyboardButton(text=stream_label,                   callback_data=f"agt_set_stream:{agent_id}")],
         [InlineKeyboardButton(text=f"⚡ Effort: {effort}",         callback_data=f"agt_set_effort:{agent_id}")],
         [InlineKeyboardButton(text=f"🤖 Model: {model}",           callback_data=f"agt_set_model:{agent_id}")],
         [InlineKeyboardButton(text=f"💰 Budget: {budget}",         callback_data=f"agt_set_budget:{agent_id}")],

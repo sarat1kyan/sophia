@@ -157,8 +157,16 @@ class Agent:
             try:
                 await self.runner.start(self.workspace_path, full_prompt, extra_flags=extra_flags, env=env)
                 collected: list[str] = []
+                run_usage: dict | None = None
+                run_cost: float | None = None
 
                 async for line, meta in self.runner.stream():
+                    # Capture token usage from result events
+                    if meta.get("usage"):
+                        run_usage = meta["usage"]
+                    if meta.get("cost_usd") is not None:
+                        run_cost = meta["cost_usd"]
+
                     # Send tool-use notices as separate highlighted messages
                     if meta.get("tool_uses"):
                         for tu in meta["tool_uses"]:
@@ -186,7 +194,9 @@ class Agent:
                                     result = await execute_command(cmd, streamer.chat_id)
                                 except Exception as e:
                                     result = f"❌ Command failed: {e}"
-                                await streamer.send_orchestrator_notice(cmd["raw"], result)
+                                await streamer.send_orchestrator_notice(
+                                    cmd["type"], cmd["args"], result
+                                )
                             await asyncio.sleep(0)
                             continue
 
@@ -207,7 +217,7 @@ class Agent:
                 await save_message(session_id, self.agent_id, "assistant", full_output)
                 self.status = "done"
                 await _update_status(self.agent_id, "done")
-                await streamer.send_final("done")
+                await streamer.send_final("done", usage=run_usage, cost=run_cost)
 
             except asyncio.CancelledError:
                 self.status = "idle"

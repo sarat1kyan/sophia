@@ -146,6 +146,9 @@ def _settings_summary(s: dict) -> str:
     parts = []
     if s.get("skip_permissions"):
         parts.append("skip-perms")
+    stream_icon = {"full": "🔊", "tools": "🔧", "silent": "🔇"}
+    mode = s.get("stream_mode", "full")
+    parts.append(f"{stream_icon.get(mode, '🔊')}{mode}")
     if s.get("effort"):
         parts.append(f"effort={s['effort']}")
     if s.get("model"):
@@ -521,6 +524,22 @@ async def cb_toggle_skip(cb: CallbackQuery) -> None:
     )
     state_str = "ON" if settings["skip_permissions"] else "OFF"
     await cb.answer(f"Skip permissions: {state_str}")
+
+
+@router.callback_query(F.data.startswith("agt_set_stream:"))
+async def cb_toggle_stream(cb: CallbackQuery) -> None:
+    agent_id = cb.data.split(":", 1)[1]
+    settings = await _load_agent_settings(agent_id)
+    modes = ["full", "tools", "silent"]
+    current = settings.get("stream_mode", "full")
+    next_mode = modes[(modes.index(current) + 1) % len(modes)]
+    settings["stream_mode"] = next_mode
+    await orchestrator.update_agent_settings(agent_id, settings)
+    await cb.message.edit_reply_markup(
+        reply_markup=keyboards.agent_settings_keyboard(agent_id, settings)
+    )
+    labels = {"full": "🔊 Full - stream everything", "tools": "🔧 Tools only - no text", "silent": "🔇 Silent - just final status"}
+    await cb.answer(labels[next_mode])
 
 
 @router.callback_query(F.data.startswith("agt_set_effort:"))

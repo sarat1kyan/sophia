@@ -65,9 +65,16 @@ def _extract_text(raw: str) -> tuple[str | None, dict | None]:
         return text, meta
 
     if t == "result":
+        meta: dict = {}
+        usage = obj.get("usage")
+        cost = obj.get("cost_usd")
+        if usage:
+            meta["usage"] = usage
+        if cost is not None:
+            meta["cost_usd"] = cost
         if obj.get("is_error"):
-            return f"[error] {obj.get('result', '')}", None
-        return None, None
+            return f"[error] {obj.get('result', '')}", meta or None
+        return None, meta or None
 
     if t == "system" and obj.get("subtype") == "init":
         model = obj.get("model", "")

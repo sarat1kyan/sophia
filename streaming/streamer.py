@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from html import escape
 from pathlib import Path
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -8,10 +9,11 @@ from aiogram.exceptions import TelegramBadRequest
 log = logging.getLogger(__name__)
 
 _CODE_FENCE = re.compile(r"```")
-MAX_MSG = 4096
+_FENCE_BLOCK = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
+MAX_MSG = 3800  # safe margin below Telegram's 4096
 
 
-def _split_text(text: str, limit: int = MAX_MSG) -> list[str]:
+def _split_plain(text: str, limit: int = MAX_MSG) -> list[str]:
     chunks = []
     while len(text) > limit:
         split_at = text.rfind("\n", 0, limit)
@@ -24,35 +26,65 @@ def _split_text(text: str, limit: int = MAX_MSG) -> list[str]:
     return chunks
 
 
+def _format_text(text: str) -> tuple[str, str | None]:
+    """Convert complete markdown code fences to Telegram HTML <pre><code>.
+    Returns (formatted, parse_mode). Falls back to plain if blocks are open."""
+    if "```" not in text:
+        return text, None
+    if text.count("```") % 2 != 0:
+        return text, None  # incomplete block - wait for closing fence
+    result = []
+    last = 0
+    for m in _FENCE_BLOCK.finditer(text):
+        before = text[last:m.start()]
+        if before:
+            result.append(escape(before))
+        code = m.group(2)
+        result.append(f"<pre><code>{escape(code)}</code></pre>")
+        last = m.end()
+    tail = text[last:]
+    if tail:
+        result.append(escape(tail))
+    return "".join(result), "HTML"
+
+
 class AgentStreamer:
+    """
+    Streams Claude output to Telegram.
+
+    mode="full"   - stream all text + tool notices (default for regular agents)
+    mode="tools"  - tool notices only, text is suppressed (default for orchestrators)
+    mode="silent" - nothing until final status
+    """
+
     def __init__(
         self,
         bot: Bot,
         chat_id: int,
         agent_name: str,
-        chunk_lines: int = 5,
+        chunk_lines: int = 1,
+        mode: str = "full",
     ):
         self.bot = bot
         self.chat_id = chat_id
         self.agent_name = agent_name
         self.chunk_lines = chunk_lines
+        self.mode = mode
         self._buffer: list[str] = []
         self._current_msg_id: int | None = None
         self._current_text = ""
-        self._artifacts: list[str] = []
         self._in_code_block = False
+        self._artifacts: list[str] = []
 
     def _prefix(self) -> str:
-        return f"🤖 [{self.agent_name}]\n"
-
-    def _wrap(self, text: str) -> str:
-        return self._prefix() + text
+        return f"🤖 <b>[{escape(self.agent_name)}]</b>\n"
 
     async def feed(self, line: str) -> None:
+        if self.mode != "full":
+            return
         fences = len(_CODE_FENCE.findall(line))
         if fences % 2 != 0:
             self._in_code_block = not self._in_code_block
-
         self._buffer.append(line)
         if len(self._buffer) >= self.chunk_lines or (not self._in_code_block and line == ""):
             await self.flush()
@@ -64,18 +96,21 @@ class AgentStreamer:
         self._buffer = []
         new_text = (self._current_text + "\n" + chunk).strip() if self._current_text else chunk
 
-        if len(self._wrap(new_text)) > MAX_MSG:
+        wrapped_len = len(self._prefix()) + len(new_text)
+        if wrapped_len > MAX_MSG:
             await self._send_new(new_text)
             self._current_text = ""
             return
 
         if self._current_msg_id:
             try:
+                formatted, parse_mode = _format_text(new_text)
+                full_msg = self._prefix() + formatted
                 await self.bot.edit_message_text(
-                    self._wrap(new_text),
+                    full_msg,
                     chat_id=self.chat_id,
                     message_id=self._current_msg_id,
-                    parse_mode=None,
+                    parse_mode=parse_mode or "HTML",
                 )
                 self._current_text = new_text
                 return
@@ -85,12 +120,13 @@ class AgentStreamer:
         await self._send_new(new_text)
 
     async def _send_new(self, text: str) -> None:
-        for part in _split_text(text):
+        for part in _split_plain(text):
             try:
+                formatted, parse_mode = _format_text(part)
                 msg = await self.bot.send_message(
                     self.chat_id,
-                    self._wrap(part),
-                    parse_mode=None,
+                    self._prefix() + formatted,
+                    parse_mode=parse_mode or "HTML",
                 )
                 self._current_msg_id = msg.message_id
                 self._current_text = part
@@ -107,20 +143,21 @@ class AgentStreamer:
             await self.bot.send_document(
                 self.chat_id,
                 doc,
-                caption=f"🤖 [{self.agent_name}] {p.name}",
+                caption=f"🤖 <b>[{escape(self.agent_name)}]</b> {p.name}",
+                parse_mode="HTML",
             )
             self._artifacts.append(file_path)
         except Exception as e:
             log.error("Failed to send artifact %s: %s", file_path, e)
 
     async def send_tool_notice(self, tool_name: str, summary: str, agent_id: str) -> None:
-        """Send a distinct message when Claude is about to use a tool."""
-        from html import escape
+        if self.mode == "silent":
+            return
         from bot.keyboards import kill_during_run_keyboard
         sensitive = tool_name.lower() in ("bash", "computer", "repl", "exec")
         icon = "⚡" if sensitive else "🔧"
         text = (
-            f"{icon} <b>[{escape(self.agent_name)}]</b> - <b>{escape(tool_name)}</b>\n"
+            f"{icon} <b>[{escape(self.agent_name)}]</b>  <b>{escape(tool_name)}</b>\n"
             f"<code>{escape(summary[:300])}</code>"
         )
         try:
@@ -130,20 +167,47 @@ class AgentStreamer:
                 parse_mode="HTML",
                 reply_markup=kill_during_run_keyboard(agent_id),
             )
-            # Reset so next content flush sends a new message below the tool notice
             self._current_msg_id = None
             self._current_text = ""
         except Exception as e:
             log.error("Failed to send tool notice: %s", e)
 
-    async def send_orchestrator_notice(self, command_raw: str, result: str) -> None:
-        """Send feedback when Sophia executes a SOPHIA command."""
-        from html import escape
-        text = (
-            f"🎭 <b>[{escape(self.agent_name)}]</b>\n"
-            f"<code>{escape(command_raw)}</code>\n\n"
-            f"{result}"
-        )
+    async def send_orchestrator_notice(self, cmd_type: str, cmd_args: dict, result: str) -> None:
+        """Clean card for each Sophia orchestration action. Always visible regardless of mode."""
+        icons = {
+            "CREATE_WORKSPACE": "📁",
+            "CREATE_AGENT": "🤖",
+            "RUN_AGENT": "▶️",
+            "LIST_AGENTS": "📋",
+            "LIST_WORKSPACES": "🗂",
+        }
+        icon = icons.get(cmd_type, "🎭")
+
+        # Build a context line showing key args without raw command syntax
+        context = ""
+        if cmd_type == "CREATE_WORKSPACE":
+            name = cmd_args.get("name", "")
+            path = cmd_args.get("path", "")
+            context = f"\n<code>{escape(path)}</code>" if path else ""
+        elif cmd_type == "CREATE_AGENT":
+            role = cmd_args.get("role", "")
+            tpl = cmd_args.get("template", "")
+            ws = cmd_args.get("workspace", "")
+            parts = []
+            if role:
+                parts.append(f"role: {escape(role)}")
+            if tpl and tpl != role:
+                parts.append(f"template: {escape(tpl)}")
+            if ws:
+                parts.append(f"workspace: {escape(ws)}")
+            context = f"\n<i>{' | '.join(parts)}</i>" if parts else ""
+        elif cmd_type == "RUN_AGENT":
+            prompt = cmd_args.get("prompt", "")
+            if prompt:
+                preview = prompt[:120].replace("\n", " ")
+                context = f"\n<i>{escape(preview)}{'...' if len(prompt) > 120 else ''}</i>"
+
+        text = f"🎭 <b>Sophia</b>  {icon}\n{result}{context}"
         try:
             await self.bot.send_message(self.chat_id, text, parse_mode="HTML")
             self._current_msg_id = None
@@ -151,15 +215,32 @@ class AgentStreamer:
         except Exception as e:
             log.error("Failed to send orchestrator notice: %s", e)
 
-    async def send_final(self, status: str) -> None:
-        from html import escape
+    async def send_final(
+        self,
+        status: str,
+        usage: dict | None = None,
+        cost: float | None = None,
+    ) -> None:
         await self.flush()
         icon_map = {"done": "✅", "timeout": "⏱", "error": "❌"}
         emoji = icon_map.get(status, "❌")
+
+        token_line = ""
+        if usage:
+            inp = usage.get("input_tokens", 0)
+            out = usage.get("output_tokens", 0)
+            cached = usage.get("cache_read_input_tokens", 0)
+            token_line = f"\n<code>in {inp:,} | out {out:,}"
+            if cached:
+                token_line += f" | cached {cached:,}"
+            if cost is not None:
+                token_line += f" | ${cost:.4f}"
+            token_line += "</code>"
+
         try:
             await self.bot.send_message(
                 self.chat_id,
-                f"{emoji} <b>[{escape(self.agent_name)}]</b> {status}.",
+                f"{emoji} <b>[{escape(self.agent_name)}]</b> {status}.{token_line}",
                 parse_mode="HTML",
             )
         except Exception as e:

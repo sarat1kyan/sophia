@@ -168,7 +168,11 @@ async def start_agent(agent_id: str, prompt: str, chat_id: int, resume: bool = F
         raise RuntimeError("orchestrator.init() must be called before start_agent()")
 
     chunk_lines = _config.get("sophia", {}).get("stream_chunk_lines", 1)
-    streamer = AgentStreamer(_bot, chat_id, agent.name, chunk_lines)
+    if agent.role == "orchestrator":
+        stream_mode = "tools"
+    else:
+        stream_mode = agent.settings.get("stream_mode", "full")
+    streamer = AgentStreamer(_bot, chat_id, agent.name, chunk_lines, mode=stream_mode)
 
     async def notify_cb(event: str, data: str) -> None:
         if event == "approval" and _bot:
