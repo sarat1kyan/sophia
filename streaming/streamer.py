@@ -297,11 +297,12 @@ class AgentStreamer:
             inp    = usage.get("input_tokens", 0)
             out    = usage.get("output_tokens", 0)
             cached = usage.get("cache_read_input_tokens", 0)
-            parts.append(f"📥 in {inp:,}  ·  📤 out {out:,}")
-            if cached:
-                parts.append(f"⚡ {cached:,} cached")
-            if cost is not None:
-                parts.append(f"💰 ${cost:.4f}")
+            if inp or out:
+                parts.append(f"📥 in {inp:,}  ·  📤 out {out:,}")
+                if cached:
+                    parts.append(f"⚡ {cached:,} cached")
+                if cost is not None:
+                    parts.append(f"💰 ${cost:.4f}")
 
         try:
             await self.bot.send_message(

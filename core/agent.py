@@ -159,6 +159,7 @@ class Agent:
                 collected: list[str] = []
                 run_usage: dict | None = None
                 run_cost: float | None = None
+                run_error: bool = False
 
                 async for line, meta in self.runner.stream():
                     # Capture token usage from result events
@@ -177,6 +178,8 @@ class Agent:
                     if line is None:
                         await asyncio.sleep(0)
                         continue
+                    if line.startswith("[error]"):
+                        run_error = True
                     if line.startswith("[session started"):
                         continue
 
@@ -215,9 +218,10 @@ class Agent:
 
                 full_output = "\n".join(collected)
                 await save_message(session_id, self.agent_id, "assistant", full_output)
-                self.status = "done"
-                await _update_status(self.agent_id, "done")
-                await streamer.send_final("done", usage=run_usage, cost=run_cost)
+                final_status = "error" if run_error else "done"
+                self.status = final_status
+                await _update_status(self.agent_id, final_status)
+                await streamer.send_final(final_status, usage=run_usage, cost=run_cost)
 
             except asyncio.CancelledError:
                 self.status = "idle"

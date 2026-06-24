@@ -444,6 +444,23 @@ async def test_send_final_agent_name_in_text():
     text = s.bot.send_message.call_args[0][1]
     assert "TestAgent" in text
 
+@pytest.mark.asyncio
+async def test_send_final_zero_tokens_suppresses_token_line():
+    """Auth failure returns usage={in:0, out:0} — must NOT show '📥 in 0'."""
+    s = _make_streamer()
+    await s.send_final("error", usage={"input_tokens": 0, "output_tokens": 0}, cost=None)
+    text = s.bot.send_message.call_args[0][1]
+    assert "📥" not in text
+    assert "📤" not in text
+
+@pytest.mark.asyncio
+async def test_send_final_nonzero_tokens_shows_token_line():
+    s = _make_streamer()
+    await s.send_final("done", usage={"input_tokens": 1500, "output_tokens": 300})
+    text = s.bot.send_message.call_args[0][1]
+    assert "1,500" in text
+    assert "300" in text
+
 
 # ── feed() mode filtering ─────────────────────────────────────────────────────
 
